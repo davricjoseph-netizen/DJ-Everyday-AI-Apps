@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Medication Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js" type="module"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .container {
+            max-width: 420px;
+        }
+        .dose-item {
+            transition: all 0.3s ease;
+        }
+        .dose-item.taken {
+            background-color: #d1fae5; /* Green 100 */
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="min-h-screen flex flex-col items-center p-4">
+
+        <header class="w-full container mb-6 pt-8">
+            <h1 class="text-3xl font-extrabold text-gray-900 text-center">Capsule Tracker</h1>
+            <p id="date-display" class="text-lg text-gray-500 text-center mt-1"></p>
+            <p id="user-id-display" class="text-xs text-gray-400 text-center mt-2"></p>
+        </header>
+
+        <main id="tracker-container" class="w-full container bg-white shadow-xl rounded-2xl p-6 transition-opacity duration-500 opacity-0">
+            <div id="loading" class="text-center text-gray-500 py-10 hidden">
+                <svg class="animate-spin h-5 w-5 mr-3 inline-block text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Loading Tracker...
+            </div>
+            <div id="doses-list" class="space-y-4">
+                <!-- Dose items will be inserted here by JavaScript -->
+            </div>
+        </main>
+
+        <!-- Initial Doses Prompt Modal -->
+        <div id="doses-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 hidden z-50">
+            <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">Daily Doses Setup</h2>
+                <p class="text-gray-600 mb-4">How many times a day do you need to take your capsule?</p>
+                <div class="flex flex-col space-y-4">
+                    <input type="number" id="doses-input" min="1" max="10" placeholder="e.g., 4"
+                           class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-lg">
+                    <button id="set-doses-btn"
+                            class="w-full bg-indigo-600 text-white font-semibold py-3 rounded-lg hover:bg-indigo-700 transition duration-150 shadow-md">
+                        Start Tracking
+                    </button>
+                    <p id="modal-error" class="text-red-500 text-sm mt-2 hidden">Please enter a valid number of doses (1-10).</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- General Message/Error Modal -->
+        <div id="message-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 hidden z-50">
+            <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm text-center">
+                <h2 id="message-title" class="text-xl font-bold text-gray-800 mb-4"></h2>
+                <p id="message-content" class="text-gray-600 mb-6"></p>
+                <button id="message-close-btn" class="bg-indigo-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700 transition duration-150">
+                    Close
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // IMPORTANT: Global variables for Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth, userId = null;
+        let unsubscribeSnapshot = null;
+        let isAuthReady = false;
+
+        setLogLevel('Debug'); // Enable Firestore logging
+
+        // --- Utility Functions ---
+
+        /**
+         * Gets the current date formatted as YYYY-MM-DD for use as a Firestore document ID.
+         */
+        function getTodayDateId() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        /**
+         * Formats the current date for display.
+         */
+        function formatDisplayDate() {
+            const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+            return new Date().toLocaleDateString(undefined, options);
+        }
+
+        /**
+         * Converts time string (HH:MM AM/PM) to 24-hour format (HH:MM)
+         * Note: Not currently used for saving but useful if time zone logic is added later.
+         */
+        function timeTo24h(timeStr) {
+            const [time, modifier] = timeStr.split(' ');
+            let [hours, minutes] = time.split(':');
+            if (hours === '12') {
+                hours = '00';
+            }
+            if (modifier === 'PM') {
+                hours = parseInt(hours, 10) + 12;
+            }
+            return `${String(hours).padStart(2, '0')}:${minutes}`;
+        }
+        
+        /**
+         * Shows a custom message modal.
+         */
+        function showMessage(title, content) {
+            document.getElementById('message-title').textContent = title;
+            document.getElementById('message-content').textContent = content;
+            document.getElementById('message-modal').classList.remove('hidden');
+        }
+
+        document.getElementById('message-close-btn').addEventListener('click', () => {
+            document.getElementById('message-modal').classList.add('hidden');
+        });
+
+        // --- Firestore Data Operations ---
+
+        /**
+         * Gets the document reference for today's doses.
+         */
+        function getTodayDocRef() {
+            if (!db || !userId) return null;
+            const todayId = getTodayDateId();
+            // Path: /artifacts/{appId}/users/{userId}/medication_tracker/{YYYY-MM-DD}
+            const collectionPath = `artifacts/${appId}/users/${userId}/medication_tracker`;
+            return doc(db, collectionPath, todayId);
+        }
+
+        /**
+         * Saves the initial number of doses and sets up the document.
+         */
+        async function saveInitialDoses(dosesPerDay) {
+            const docRef = getTodayDocRef();
+            if (!docRef) return;
+
+            const initialDoses = Array.from({ length: dosesPerDay }, (_, i) => ({
+                id: i + 1,
+                isTaken: false,
+                time: '',
+            }));
+
+            const data = {
+                dosesPerDay: dosesPerDay,
+                doses: initialDoses,
+                lastUpdated: new Date().toISOString(),
+                userId: userId // Stored for debugging/audit
+            };
+
+            try {
+                await setDoc(docRef, data);
+                console.log("Initial doses saved successfully.");
+            } catch (error) {
+                console.error("Error saving initial doses:", error);
+                showMessage("Database Error", "Could not save the initial dose configuration. Please try again.");
+            }
+        }
+
+        /**
+         * Updates the status or time of a single dose.
+         */
+        async function updateDose(doseId, newStatus, newTime) {
+            const docRef = getTodayDocRef();
+            if (!docRef) return;
+
+            // This is inefficient but necessary for a simple update without transactions
+            // First, get the current data (or rely on the snapshot to give us the current state)
+            // Since we are using setDoc in a listener, we should ideally only update the specific field,
+            // but to update an item in an array, we fetch the array, modify it, and save the whole array.
+            
+            // To avoid race conditions, we rely on the realtime listener (onSnapshot) to redraw the UI.
+            // We will fetch the current document content, update the array locally, and then set the new state.
+            
+            // The onSnapshot will automatically update the UI when the setDoc is successful.
+            
+            try {
+                // To safely update array elements in Firestore, we use the `onSnapshot` data
+                // to get the latest state, modify the array, and then write it back.
+                // However, since we don't have a reliable way to get the snapshot data outside the listener,
+                // we'll rely on the listener's internal data for the update.
+                // For simplicity here, we'll try to update the whole array when a change happens.
+                
+                // Fetch the current data from the UI state or rely on the snapshot
+                // This is a common simplification in single-page apps using onSnapshot
+                
+                // Since this update function is called by the UI, we need the current snapshot state.
+                // Instead of fetching, we'll implement the logic to handle the UI change and then sync.
+                
+                let currentDosesData = window.__currentDosesData; 
+                if (!currentDosesData || !currentDosesData.doses) {
+                    // Fallback or error state
+                    console.error("Dose data not ready for update.");
+                    return;
+                }
+
+                let dosesArray = [...currentDosesData.doses];
+                const doseIndex = dosesArray.findIndex(d => d.id === doseId);
+
+                if (doseIndex > -1) {
+                    if (newStatus !== undefined) dosesArray[doseIndex].isTaken = newStatus;
+                    if (newTime !== undefined) dosesArray[doseIndex].time = newTime;
+
+                    await setDoc(docRef, {
+                        doses: dosesArray,
+                        lastUpdated: new Date().toISOString()
+                    }, { merge: true }); // Use merge: true to keep other fields like dosesPerDay
+                    
+                    console.log(`Dose ${doseId} updated successfully.`);
+                }
+            } catch (error) {
+                console.error("Error updating dose:", error);
+                showMessage("Database Error", "Could not save your dose update. Please check your connection.");
+            }
+        }
+
+
+        // --- UI Rendering ---
+
+        /**
+         * Renders the list of doses based on the data.
+         * @param {Object} data - The document data from Firestore.
+         */
+        function renderDosesList(data) {
+            const dosesList = document.getElementById('doses-list');
+            dosesList.innerHTML = '';
+            
+            if (!data || !data.doses || data.doses.length === 0) {
+                dosesList.innerHTML = '<p class="text-center text-gray-500 pt-4">No doses configured yet. Please set your daily doses.</p>';
+                document.getElementById('doses-modal').classList.remove('hidden');
+                return;
+            }
+            
+            // Store data globally so updateDose can access it
+            window.__currentDosesData = data; 
+            
+            data.doses.forEach((dose, index) => {
+                const isTaken = dose.isTaken || false;
+                const timeValue = dose.time || '';
+
+                const item = document.createElement('div');
+                item.className = `dose-item flex items-center justify-between p-4 rounded-xl shadow-md ${isTaken ? 'bg-emerald-50 ring-2 ring-emerald-300' : 'bg-white hover:bg-gray-50'}`;
+                item.setAttribute('data-dose-id', dose.id);
+
+                item.innerHTML = `
+                    <div class="flex items-center space-x-4">
+                        <input type="checkbox" id="dose-check-${dose.id}" ${isTaken ? 'checked' : ''}
+                               class="h-6 w-6 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer">
+                        <label for="dose-check-${dose.id}" class="text-lg font-semibold text-gray-800 select-none">
+                            Dose ${index + 1}
+                        </label>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <input type="time" id="dose-time-${dose.id}" value="${timeValue.split(' ')[0] || ''}" 
+                               class="w-32 p-2 border border-gray-300 rounded-lg text-gray-700 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                               placeholder="Time">
+                        <select id="dose-ampm-${dose.id}"
+                                class="p-2 border border-gray-300 rounded-lg text-gray-700 text-sm focus:ring-indigo-500 focus:border-indigo-500">
+                            <option value="AM" ${timeValue.includes('AM') ? 'selected' : ''}>AM</option>
+                            <option value="PM" ${timeValue.includes('PM') ? 'selected' : ''}>PM</option>
+                        </select>
+                    </div>
+                `;
+                
+                dosesList.appendChild(item);
+
+                // Add event listeners for the new elements
+                const checkbox = item.querySelector(`#dose-check-${dose.id}`);
+                const timeInput = item.querySelector(`#dose-time-${dose.id}`);
+                const ampmSelect = item.querySelector(`#dose-ampm-${dose.id}`);
+
+                checkbox.addEventListener('change', (e) => {
+                    const newStatus = e.target.checked;
+                    updateDose(dose.id, newStatus, undefined);
+                });
+
+                const updateTime = () => {
+                    const time = timeInput.value;
+                    const ampm = ampmSelect.value;
+                    if (time) {
+                        const newTime = `${time} ${ampm}`;
+                        updateDose(dose.id, undefined, newTime);
+                    } else {
+                         // Clear the time if the time input is empty
+                        updateDose(dose.id, undefined, '');
+                    }
+                };
+
+                timeInput.addEventListener('change', updateTime);
+                ampmSelect.addEventListener('change', updateTime);
+            });
+
+            document.getElementById('tracker-container').classList.remove('opacity-0', 'hidden');
+            document.getElementById('loading').classList.add('hidden');
+        }
+
+        // --- Auth and Initialization ---
+
+        /**
+         * Listens for real-time changes to today's dose document.
+         */
+        function startRealtimeListener() {
+            if (unsubscribeSnapshot) {
+                unsubscribeSnapshot(); // Stop previous listener if any
+            }
+
+            const docRef = getTodayDocRef();
+            if (!docRef) return;
+
+            unsubscribeSnapshot = onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    // Document exists for today, render the data
+                    const data = docSnap.data();
+                    renderDosesList(data);
+                } else {
+                    // Document does not exist for today, prompt user for dosesPerDay
+                    console.log("No doses configured for today. Showing modal.");
+                    document.getElementById('loading').classList.add('hidden');
+                    document.getElementById('doses-modal').classList.remove('hidden');
+                }
+            }, (error) => {
+                console.error("Firestore listener error:", error);
+                showMessage("Connection Error", "There was an issue loading your tracking data. Please try refreshing.");
+            });
+        }
+
+        /**
+         * Handles the initial setup of the number of doses per day.
+         */
+        document.getElementById('set-doses-btn').addEventListener('click', async () => {
+            const dosesInput = document.getElementById('doses-input');
+            const dosesPerDay = parseInt(dosesInput.value, 10);
+            const errorMsg = document.getElementById('modal-error');
+
+            if (dosesPerDay > 0 && dosesPerDay <= 10) {
+                errorMsg.classList.add('hidden');
+                document.getElementById('doses-modal').classList.add('hidden');
+                document.getElementById('loading').classList.remove('hidden');
+                await saveInitialDoses(dosesPerDay);
+                // The onSnapshot listener will handle the rendering after the save is complete
+            } else {
+                errorMsg.classList.remove('hidden');
+            }
+        });
+
+        /**
+         * Initializes Firebase and handles authentication.
+         */
+        async function initializeAppAndAuth() {
+            if (!firebaseConfig) {
+                showMessage("Configuration Error", "Firebase configuration is missing. The app cannot load.");
+                return;
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                document.getElementById('date-display').textContent = formatDisplayDate();
+                document.getElementById('loading').classList.remove('hidden');
+                document.getElementById('tracker-container').classList.remove('opacity-0');
+                document.getElementById('tracker-container').classList.add('hidden');
+                
+                await new Promise(resolve => {
+                    onAuthStateChanged(auth, async (user) => {
+                        if (!user) {
+                            // Sign in if not authenticated
+                            if (initialAuthToken) {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } else {
+                                await signInAnonymously(auth);
+                            }
+                        }
+                        // User is now guaranteed to exist (either new anonymous or custom-token user)
+                        userId = auth.currentUser.uid;
+                        document.getElementById('user-id-display').textContent = `User ID: ${userId}`;
+                        isAuthReady = true;
+                        resolve();
+                    });
+                });
+
+                if (isAuthReady) {
+                    startRealtimeListener();
+                } else {
+                    showMessage("Authentication Error", "Failed to authenticate. Tracking cannot be enabled.");
+                }
+
+            } catch (error) {
+                console.error("Firebase Initialization or Auth Error:", error);
+                showMessage("Startup Error", `Failed to initialize the app: ${error.message}`);
+            }
+        }
+
+        // Start the application lifecycle
+        initializeAppAndAuth();
+    </script>
+</body>
+</html>
