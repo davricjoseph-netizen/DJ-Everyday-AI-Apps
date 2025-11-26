@@ -36,7 +36,7 @@
     </style>
 </head>
 <body>
-    <!-- Main App Container - Initially Hidden to prevent flicker -->
+    <!-- Main App Container - REMAINS HIDDEN until initial data load is complete in JS -->
     <div id="app-wrapper" class="min-h-screen flex flex-col items-center p-4 hidden">
 
         <header class="w-full container mb-6 pt-8">
@@ -115,6 +115,7 @@
         
         let db, auth, userId = null;
         let unsubscribeSnapshot = null;
+        let firstLoadComplete = false; // New flag to control initial visibility
 
         setLogLevel('Debug'); // Enable Firestore logging
 
@@ -362,9 +363,22 @@
                     document.getElementById('loading').classList.add('hidden');
                     document.getElementById('doses-modal').classList.remove('hidden');
                 }
+                
+                // CRITICAL FIX: Only show the app container once data has returned (success or failure)
+                if (!firstLoadComplete) {
+                    document.getElementById('app-wrapper').classList.remove('hidden');
+                    firstLoadComplete = true;
+                }
+
             }, (error) => {
                 console.error("Firestore listener error:", error);
                 showMessage("Connection Error", "There was an issue loading your tracking data. Check Firebase security rules.");
+                
+                // Show app wrapper even on error, so the user sees the error message
+                if (!firstLoadComplete) {
+                    document.getElementById('app-wrapper').classList.remove('hidden');
+                    firstLoadComplete = true;
+                }
             });
         }
 
@@ -403,9 +417,10 @@
 
                 document.getElementById('date-display').textContent = formatDisplayDate();
                 
-                // Show the main app wrapper now to prevent the delay flicker of just the header
-                document.getElementById('app-wrapper').classList.remove('hidden');
-
+                // !!! IMPORTANT CHANGE: Do NOT remove the 'hidden' class here anymore.
+                // It is now removed inside the onSnapshot callback below to ensure everything
+                // loads together after the network call is complete.
+                
                 // Auth Logic: Since initialAuthToken is null (for standalone use), sign in anonymously
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
