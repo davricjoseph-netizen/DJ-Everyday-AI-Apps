@@ -95,8 +95,8 @@
 	  messagingSenderId: "701645703776",
 	  appId: "1:701645703776:web:36efba22495d83a56a5105",
 	  measurementId: "G-97NRLCYX0N"
-	};        
-
+	};   
+        
         // Use a static App ID for collection path, since the dynamic one is missing.
         const appId = "capsule-tracker-app"; 
 
@@ -372,7 +372,12 @@
 
             } catch (error) {
                 console.error("Firebase Initialization or Auth Error:", error);
-                showMessage("Startup Error", `Failed to initialize the app: ${error.message}. Check your Firebase Security Rules.`);
+                // Check for the specific error related to configuration or provider
+                let errorMessage = error.message;
+                if (error.code === 'auth/configuration-not-found') {
+                    errorMessage = "Firebase Authentication is not fully enabled. Please ensure Anonymous sign-in is enabled in your Firebase Console.";
+                }
+                showMessage("Startup Error", `Failed to initialize the app: ${errorMessage}`);
             }
         }
 
