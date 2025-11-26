@@ -79,13 +79,26 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // IMPORTANT: Global variables for Canvas environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // =========================================================================
+        // === CRITICAL FIX: PASTE YOUR OWN FIREBASE CONFIGURATION OBJECT BELOW ===
+        // =========================================================================
+	// Your web app's Firebase configuration
+	// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+	const firebaseConfig = {
+	  apiKey: "AIzaSyCftGEAH6VuXJPedpCU42aF1wHMwbDmzdk",
+	  authDomain: "capsuletracker.firebaseapp.com",
+	  projectId: "capsuletracker",
+	  storageBucket: "capsuletracker.firebasestorage.app",
+	  messagingSenderId: "701645703776",
+	  appId: "1:701645703776:web:36efba22495d83a56a5105",
+	  measurementId: "G-97NRLCYX0N"
+	};        
+
+        // Use a static App ID for collection path, since the dynamic one is missing.
+        const appId = "capsule-tracker-app"; 
 
         let db, auth, userId = null;
         let unsubscribeSnapshot = null;
@@ -114,22 +127,6 @@
             return new Date().toLocaleDateString(undefined, options);
         }
 
-        /**
-         * Converts time string (HH:MM AM/PM) to 24-hour format (HH:MM)
-         * Note: Not currently used for saving but useful if time zone logic is added later.
-         */
-        function timeTo24h(timeStr) {
-            const [time, modifier] = timeStr.split(' ');
-            let [hours, minutes] = time.split(':');
-            if (hours === '12') {
-                hours = '00';
-            }
-            if (modifier === 'PM') {
-                hours = parseInt(hours, 10) + 12;
-            }
-            return `${String(hours).padStart(2, '0')}:${minutes}`;
-        }
-        
         /**
          * Shows a custom message modal.
          */
@@ -173,7 +170,7 @@
                 dosesPerDay: dosesPerDay,
                 doses: initialDoses,
                 lastUpdated: new Date().toISOString(),
-                userId: userId // Stored for debugging/audit
+                userId: userId
             };
 
             try {
@@ -181,7 +178,7 @@
                 console.log("Initial doses saved successfully.");
             } catch (error) {
                 console.error("Error saving initial doses:", error);
-                showMessage("Database Error", "Could not save the initial dose configuration. Please try again.");
+                showMessage("Database Error", "Could not save the initial dose configuration. Check Firebase permissions.");
             }
         }
 
@@ -192,32 +189,9 @@
             const docRef = getTodayDocRef();
             if (!docRef) return;
 
-            // This is inefficient but necessary for a simple update without transactions
-            // First, get the current data (or rely on the snapshot to give us the current state)
-            // Since we are using setDoc in a listener, we should ideally only update the specific field,
-            // but to update an item in an array, we fetch the array, modify it, and save the whole array.
-            
-            // To avoid race conditions, we rely on the realtime listener (onSnapshot) to redraw the UI.
-            // We will fetch the current document content, update the array locally, and then set the new state.
-            
-            // The onSnapshot will automatically update the UI when the setDoc is successful.
-            
             try {
-                // To safely update array elements in Firestore, we use the `onSnapshot` data
-                // to get the latest state, modify the array, and then write it back.
-                // However, since we don't have a reliable way to get the snapshot data outside the listener,
-                // we'll rely on the listener's internal data for the update.
-                // For simplicity here, we'll try to update the whole array when a change happens.
-                
-                // Fetch the current data from the UI state or rely on the snapshot
-                // This is a common simplification in single-page apps using onSnapshot
-                
-                // Since this update function is called by the UI, we need the current snapshot state.
-                // Instead of fetching, we'll implement the logic to handle the UI change and then sync.
-                
                 let currentDosesData = window.__currentDosesData; 
                 if (!currentDosesData || !currentDosesData.doses) {
-                    // Fallback or error state
                     console.error("Dose data not ready for update.");
                     return;
                 }
@@ -232,7 +206,7 @@
                     await setDoc(docRef, {
                         doses: dosesArray,
                         lastUpdated: new Date().toISOString()
-                    }, { merge: true }); // Use merge: true to keep other fields like dosesPerDay
+                    }, { merge: true });
                     
                     console.log(`Dose ${doseId} updated successfully.`);
                 }
@@ -247,7 +221,6 @@
 
         /**
          * Renders the list of doses based on the data.
-         * @param {Object} data - The document data from Firestore.
          */
         function renderDosesList(data) {
             const dosesList = document.getElementById('doses-list');
@@ -259,12 +232,13 @@
                 return;
             }
             
-            // Store data globally so updateDose can access it
             window.__currentDosesData = data; 
             
             data.doses.forEach((dose, index) => {
                 const isTaken = dose.isTaken || false;
-                const timeValue = dose.time || '';
+                const timeValueParts = (dose.time || '').split(' ');
+                const timeOnly = timeValueParts[0] || '';
+                const ampmOnly = timeValueParts[1] || 'AM';
 
                 const item = document.createElement('div');
                 item.className = `dose-item flex items-center justify-between p-4 rounded-xl shadow-md ${isTaken ? 'bg-emerald-50 ring-2 ring-emerald-300' : 'bg-white hover:bg-gray-50'}`;
@@ -279,13 +253,13 @@
                         </label>
                     </div>
                     <div class="flex items-center space-x-2">
-                        <input type="time" id="dose-time-${dose.id}" value="${timeValue.split(' ')[0] || ''}" 
+                        <input type="time" id="dose-time-${dose.id}" value="${timeOnly}" 
                                class="w-32 p-2 border border-gray-300 rounded-lg text-gray-700 text-sm focus:ring-indigo-500 focus:border-indigo-500"
                                placeholder="Time">
                         <select id="dose-ampm-${dose.id}"
                                 class="p-2 border border-gray-300 rounded-lg text-gray-700 text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                            <option value="AM" ${timeValue.includes('AM') ? 'selected' : ''}>AM</option>
-                            <option value="PM" ${timeValue.includes('PM') ? 'selected' : ''}>PM</option>
+                            <option value="AM" ${ampmOnly === 'AM' ? 'selected' : ''}>AM</option>
+                            <option value="PM" ${ampmOnly === 'PM' ? 'selected' : ''}>PM</option>
                         </select>
                     </div>
                 `;
@@ -306,10 +280,9 @@
                     const time = timeInput.value;
                     const ampm = ampmSelect.value;
                     if (time) {
-                        const newTime = `${time} ${ampm}`;
+                        const newTime = `${time} ${ampm}`; 
                         updateDose(dose.id, undefined, newTime);
                     } else {
-                         // Clear the time if the time input is empty
                         updateDose(dose.id, undefined, '');
                     }
                 };
@@ -329,7 +302,7 @@
          */
         function startRealtimeListener() {
             if (unsubscribeSnapshot) {
-                unsubscribeSnapshot(); // Stop previous listener if any
+                unsubscribeSnapshot();
             }
 
             const docRef = getTodayDocRef();
@@ -337,18 +310,16 @@
 
             unsubscribeSnapshot = onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
-                    // Document exists for today, render the data
                     const data = docSnap.data();
                     renderDosesList(data);
                 } else {
-                    // Document does not exist for today, prompt user for dosesPerDay
                     console.log("No doses configured for today. Showing modal.");
                     document.getElementById('loading').classList.add('hidden');
                     document.getElementById('doses-modal').classList.remove('hidden');
                 }
             }, (error) => {
                 console.error("Firestore listener error:", error);
-                showMessage("Connection Error", "There was an issue loading your tracking data. Please try refreshing.");
+                showMessage("Connection Error", "There was an issue loading your tracking data. Check Firebase security rules.");
             });
         }
 
@@ -365,7 +336,6 @@
                 document.getElementById('doses-modal').classList.add('hidden');
                 document.getElementById('loading').classList.remove('hidden');
                 await saveInitialDoses(dosesPerDay);
-                // The onSnapshot listener will handle the rendering after the save is complete
             } else {
                 errorMsg.classList.remove('hidden');
             }
@@ -375,8 +345,9 @@
          * Initializes Firebase and handles authentication.
          */
         async function initializeAppAndAuth() {
-            if (!firebaseConfig) {
-                showMessage("Configuration Error", "Firebase configuration is missing. The app cannot load.");
+            // Check for the user's configuration
+            if (typeof firebaseConfig !== 'object' || !firebaseConfig.apiKey) {
+                showMessage("Configuration Error", "Firebase configuration is missing or incorrect. Please open the HTML file and paste your config object where instructed.");
                 return;
             }
 
@@ -390,33 +361,18 @@
                 document.getElementById('tracker-container').classList.remove('opacity-0');
                 document.getElementById('tracker-container').classList.add('hidden');
                 
-                await new Promise(resolve => {
-                    onAuthStateChanged(auth, async (user) => {
-                        if (!user) {
-                            // Sign in if not authenticated
-                            if (initialAuthToken) {
-                                await signInWithCustomToken(auth, initialAuthToken);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                        }
-                        // User is now guaranteed to exist (either new anonymous or custom-token user)
-                        userId = auth.currentUser.uid;
-                        document.getElementById('user-id-display').textContent = `User ID: ${userId}`;
-                        isAuthReady = true;
-                        resolve();
-                    });
-                });
-
-                if (isAuthReady) {
-                    startRealtimeListener();
-                } else {
-                    showMessage("Authentication Error", "Failed to authenticate. Tracking cannot be enabled.");
-                }
+                // Sign in anonymously, since we don't have the secure custom token
+                const userCredential = await signInAnonymously(auth);
+                userId = userCredential.user.uid;
+                
+                document.getElementById('user-id-display').textContent = `User ID: ${userId} (Anon)`;
+                isAuthReady = true;
+                
+                startRealtimeListener();
 
             } catch (error) {
                 console.error("Firebase Initialization or Auth Error:", error);
-                showMessage("Startup Error", `Failed to initialize the app: ${error.message}`);
+                showMessage("Startup Error", `Failed to initialize the app: ${error.message}. Check your Firebase Security Rules.`);
             }
         }
 
