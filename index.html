@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Daily Medication Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js" type="module"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js" type="module"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js" type="module"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body {
@@ -20,13 +20,24 @@
         .dose-item {
             transition: all 0.3s ease;
         }
-        .dose-item.taken {
-            background-color: #d1fae5; /* Green 100 */
+        /* Mobile-first adjustment for smaller controls */
+        .time-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 8px; /* space-y-2 equivalent */
+        }
+        @media (min-width: 640px) {
+            .time-controls {
+                flex-direction: row;
+                align-items: center;
+                gap: 8px; /* space-x-2 equivalent */
+            }
         }
     </style>
 </head>
 <body>
-    <div id="app" class="min-h-screen flex flex-col items-center p-4">
+    <!-- Main App Container - Initially Hidden to prevent flicker -->
+    <div id="app-wrapper" class="min-h-screen flex flex-col items-center p-4 hidden">
 
         <header class="w-full container mb-6 pt-8">
             <h1 class="text-3xl font-extrabold text-gray-900 text-center">Capsule Tracker</h1>
@@ -34,15 +45,16 @@
             <p id="user-id-display" class="text-xs text-gray-400 text-center mt-2"></p>
         </header>
 
-        <main id="tracker-container" class="w-full container bg-white shadow-xl rounded-2xl p-6 transition-opacity duration-500 opacity-0">
-            <div id="loading" class="text-center text-gray-500 py-10 hidden">
+        <main id="tracker-container" class="w-full container bg-white shadow-xl rounded-2xl p-6 transition-opacity duration-500">
+            <!-- Loading indicator is always visible until data is rendered -->
+            <div id="loading" class="text-center text-gray-500 py-10">
                 <svg class="animate-spin h-5 w-5 mr-3 inline-block text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
                 Loading Tracker...
             </div>
-            <div id="doses-list" class="space-y-4">
+            <div id="doses-list" class="space-y-4 opacity-0">
                 <!-- Dose items will be inserted here by JavaScript -->
             </div>
         </main>
@@ -79,30 +91,29 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =========================================================================
-        // === CRITICAL FIX: PASTE YOUR OWN FIREBASE CONFIGURATION OBJECT BELOW ===
+        // === HARDCODED FIREBASE CONFIGURATION (FOR STANDALONE USE) ================
+        // This configuration uses the one you provided in your last message.
         // =========================================================================
-	// Your web app's Firebase configuration
-	// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-	const firebaseConfig = {
-	  apiKey: "AIzaSyCftGEAH6VuXJPedpCU42aF1wHMwbDmzdk",
-	  authDomain: "capsuletracker.firebaseapp.com",
-	  projectId: "capsuletracker",
-	  storageBucket: "capsuletracker.firebasestorage.app",
-	  messagingSenderId: "701645703776",
-	  appId: "1:701645703776:web:36efba22495d83a56a5105",
-	  measurementId: "G-97NRLCYX0N"
-	};   
+        const firebaseConfig = {
+            apiKey: "AIzaSyCftGEAH6VuXJPedpCU42aF1wHMwbDmzdk",
+            authDomain: "capsuletracker.firebaseapp.com",
+            projectId: "capsuletracker",
+            storageBucket: "capsuletracker.firebasestorage.app",
+            messagingSenderId: "701645703776",
+            appId: "1:701645703776:web:36efba22495d83a56a5105",
+            measurementId: "G-97NRLCYX0N"
+        };
+        // Use a static App ID and null for the auth token for standalone use.
+        const appId = 'capsule-tracker-app';
+        const initialAuthToken = null;
+        // =========================================================================
         
-        // Use a static App ID for collection path, since the dynamic one is missing.
-        const appId = "capsule-tracker-app"; 
-
         let db, auth, userId = null;
         let unsubscribeSnapshot = null;
-        let isAuthReady = false;
 
         setLogLevel('Debug'); // Enable Firestore logging
 
@@ -125,6 +136,22 @@
         function formatDisplayDate() {
             const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
             return new Date().toLocaleDateString(undefined, options);
+        }
+
+        /**
+         * Converts 24h time string (e.g., "14:30") to 12h display string (e.g., "2:30 PM").
+         */
+        function formatTimeForDisplay(time24h) {
+            if (!time24h) return 'Not Set';
+            try {
+                const [hour, minute] = time24h.split(':').map(Number);
+                const ampm = hour >= 12 ? 'PM' : 'AM';
+                const displayHour = hour % 12 || 12; // Convert 0 to 12
+                const displayMinute = String(minute).padStart(2, '0');
+                return `${displayHour}:${displayMinute} ${ampm}`;
+            } catch (e) {
+                return 'Invalid Time';
+            }
         }
 
         /**
@@ -163,7 +190,7 @@
             const initialDoses = Array.from({ length: dosesPerDay }, (_, i) => ({
                 id: i + 1,
                 isTaken: false,
-                time: '',
+                time: '', // Stores 24h HH:MM string or empty
             }));
 
             const data = {
@@ -176,6 +203,7 @@
             try {
                 await setDoc(docRef, data);
                 console.log("Initial doses saved successfully.");
+                document.getElementById('doses-list').classList.remove('opacity-0');
             } catch (error) {
                 console.error("Error saving initial doses:", error);
                 showMessage("Database Error", "Could not save the initial dose configuration. Check Firebase permissions.");
@@ -201,7 +229,7 @@
 
                 if (doseIndex > -1) {
                     if (newStatus !== undefined) dosesArray[doseIndex].isTaken = newStatus;
-                    if (newTime !== undefined) dosesArray[doseIndex].time = newTime;
+                    if (newTime !== undefined) dosesArray[doseIndex].time = newTime; // newTime is HH:MM or ''
 
                     await setDoc(docRef, {
                         doses: dosesArray,
@@ -226,6 +254,10 @@
             const dosesList = document.getElementById('doses-list');
             dosesList.innerHTML = '';
             
+            // Show content area and hide loading spinner
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('doses-list').classList.remove('opacity-0');
+            
             if (!data || !data.doses || data.doses.length === 0) {
                 dosesList.innerHTML = '<p class="text-center text-gray-500 pt-4">No doses configured yet. Please set your daily doses.</p>';
                 document.getElementById('doses-modal').classList.remove('hidden');
@@ -236,64 +268,76 @@
             
             data.doses.forEach((dose, index) => {
                 const isTaken = dose.isTaken || false;
-                const timeValueParts = (dose.time || '').split(' ');
-                const timeOnly = timeValueParts[0] || '';
-                const ampmOnly = timeValueParts[1] || 'AM';
+                const time24hValue = dose.time || ''; // Time stored as HH:MM
+                const displayTime = formatTimeForDisplay(time24hValue);
 
                 const item = document.createElement('div');
-                item.className = `dose-item flex items-center justify-between p-4 rounded-xl shadow-md ${isTaken ? 'bg-emerald-50 ring-2 ring-emerald-300' : 'bg-white hover:bg-gray-50'}`;
+                item.className = `dose-item flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-xl shadow-md ${isTaken ? 'bg-emerald-50 ring-2 ring-emerald-300' : 'bg-white hover:bg-gray-50'}`;
                 item.setAttribute('data-dose-id', dose.id);
 
                 item.innerHTML = `
-                    <div class="flex items-center space-x-4">
+                    <div class="flex items-center space-x-4 mb-2 sm:mb-0">
                         <input type="checkbox" id="dose-check-${dose.id}" ${isTaken ? 'checked' : ''}
-                               class="h-6 w-6 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer">
+                                class="h-6 w-6 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer">
                         <label for="dose-check-${dose.id}" class="text-lg font-semibold text-gray-800 select-none">
                             Dose ${index + 1}
                         </label>
+                        ${time24hValue ? `<span class="text-xs font-medium text-gray-500 ml-4">${displayTime}</span>` : ''}
                     </div>
-                    <div class="flex items-center space-x-2">
-                        <input type="time" id="dose-time-${dose.id}" value="${timeOnly}" 
-                               class="w-32 p-2 border border-gray-300 rounded-lg text-gray-700 text-sm focus:ring-indigo-500 focus:border-indigo-500"
-                               placeholder="Time">
-                        <select id="dose-ampm-${dose.id}"
-                                class="p-2 border border-gray-300 rounded-lg text-gray-700 text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                            <option value="AM" ${ampmOnly === 'AM' ? 'selected' : ''}>AM</option>
-                            <option value="PM" ${ampmOnly === 'PM' ? 'selected' : ''}>PM</option>
-                        </select>
+                    
+                    <div class="time-controls ml-10 sm:ml-0">
+                        <!-- Time Input (24h format internally, native picker handles display) -->
+                        <input type="time" id="dose-time-input-${dose.id}" value="${time24hValue}"
+                                class="w-32 p-2 border border-gray-300 rounded-lg text-gray-700 text-sm focus:ring-indigo-500 focus:border-indigo-500">
+                        
+                        <!-- Set Button -->
+                        <button data-action="set" data-id="${dose.id}" 
+                                class="time-control-btn bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 transition duration-150 text-sm shadow-md flex-shrink-0">
+                            Set Time
+                        </button>
+                        <!-- Clear Button -->
+                        <button data-action="clear" data-id="${dose.id}" 
+                                class="time-control-btn bg-red-100 text-red-700 p-2 rounded-lg hover:bg-red-200 transition duration-150 text-sm shadow-md flex-shrink-0">
+                            Clear
+                        </button>
                     </div>
                 `;
                 
                 dosesList.appendChild(item);
 
-                // Add event listeners for the new elements
+                // Add event listener for the checkbox status change
                 const checkbox = item.querySelector(`#dose-check-${dose.id}`);
-                const timeInput = item.querySelector(`#dose-time-${dose.id}`);
-                const ampmSelect = item.querySelector(`#dose-ampm-${dose.id}`);
-
                 checkbox.addEventListener('change', (e) => {
-                    const newStatus = e.target.checked;
-                    updateDose(dose.id, newStatus, undefined);
+                    updateDose(dose.id, e.target.checked, undefined);
                 });
-
-                const updateTime = () => {
-                    const time = timeInput.value;
-                    const ampm = ampmSelect.value;
-                    if (time) {
-                        const newTime = `${time} ${ampm}`; 
-                        updateDose(dose.id, undefined, newTime);
-                    } else {
-                        updateDose(dose.id, undefined, '');
-                    }
-                };
-
-                timeInput.addEventListener('change', updateTime);
-                ampmSelect.addEventListener('change', updateTime);
             });
 
-            document.getElementById('tracker-container').classList.remove('opacity-0', 'hidden');
-            document.getElementById('loading').classList.add('hidden');
+            // If all doses are taken, maybe show a congratulatory message
+            const allTaken = data.doses.every(d => d.isTaken);
+            if (data.doses.length > 0 && allTaken) {
+                dosesList.insertAdjacentHTML('beforeend', '<p class="text-center text-emerald-600 font-semibold mt-6 p-4 bg-emerald-100 rounded-lg">🎉 All doses for today have been logged! Great job!</p>');
+            }
         }
+
+        // --- Event Delegation for Time Controls (Set/Clear) ---
+        document.getElementById('tracker-container').addEventListener('click', (e) => {
+            if (e.target.classList.contains('time-control-btn')) {
+                const doseId = parseInt(e.target.dataset.id, 10);
+                const timeInput = document.getElementById(`dose-time-input-${doseId}`);
+                
+                if (e.target.dataset.action === 'set') {
+                    if (timeInput.value) {
+                        updateDose(doseId, undefined, timeInput.value); // Saves HH:MM (24h)
+                    } else {
+                        showMessage("Time Missing", "Please select a time before setting the dose.");
+                    }
+                } else if (e.target.dataset.action === 'clear') {
+                    // Clear the time in Firestore and the local input field
+                    timeInput.value = ''; // Clear the input field immediately
+                    updateDose(doseId, undefined, ''); 
+                }
+            }
+        });
 
         // --- Auth and Initialization ---
 
@@ -334,7 +378,7 @@
             if (dosesPerDay > 0 && dosesPerDay <= 10) {
                 errorMsg.classList.add('hidden');
                 document.getElementById('doses-modal').classList.add('hidden');
-                document.getElementById('loading').classList.remove('hidden');
+                document.getElementById('loading').classList.remove('hidden'); // Show loading before saving
                 await saveInitialDoses(dosesPerDay);
             } else {
                 errorMsg.classList.remove('hidden');
@@ -347,7 +391,7 @@
         async function initializeAppAndAuth() {
             // Check for the user's configuration
             if (typeof firebaseConfig !== 'object' || !firebaseConfig.apiKey) {
-                showMessage("Configuration Error", "Firebase configuration is missing or incorrect. Please open the HTML file and paste your config object where instructed.");
+                showMessage("Configuration Error", "Firebase configuration is missing or incorrect. Cannot initialize.");
                 return;
             }
 
@@ -357,27 +401,31 @@
                 auth = getAuth(app);
 
                 document.getElementById('date-display').textContent = formatDisplayDate();
-                document.getElementById('loading').classList.remove('hidden');
-                document.getElementById('tracker-container').classList.remove('opacity-0');
-                document.getElementById('tracker-container').classList.add('hidden');
                 
-                // Sign in anonymously, since we don't have the secure custom token
-                const userCredential = await signInAnonymously(auth);
-                userId = userCredential.user.uid;
+                // Show the main app wrapper now to prevent the delay flicker of just the header
+                document.getElementById('app-wrapper').classList.remove('hidden');
+
+                // Auth Logic: Since initialAuthToken is null (for standalone use), sign in anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
                 
+                userId = auth.currentUser.uid;
                 document.getElementById('user-id-display').textContent = `User ID: ${userId} (Anon)`;
-                isAuthReady = true;
                 
+                // Now that we are authenticated, start listening for data
                 startRealtimeListener();
 
             } catch (error) {
                 console.error("Firebase Initialization or Auth Error:", error);
-                // Check for the specific error related to configuration or provider
                 let errorMessage = error.message;
                 if (error.code === 'auth/configuration-not-found') {
                     errorMessage = "Firebase Authentication is not fully enabled. Please ensure Anonymous sign-in is enabled in your Firebase Console.";
                 }
                 showMessage("Startup Error", `Failed to initialize the app: ${errorMessage}`);
+                document.getElementById('loading').classList.add('hidden');
             }
         }
 
