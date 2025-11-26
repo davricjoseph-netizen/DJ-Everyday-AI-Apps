@@ -36,8 +36,8 @@
     </style>
 </head>
 <body>
-    <!-- Main App Container - REMAINS HIDDEN until initial data load is complete in JS -->
-    <div id="app-wrapper" class="min-h-screen flex flex-col items-center p-4 hidden">
+    <!-- Main App Container - NOW VISIBLE IMMEDIATELY -->
+    <div id="app-wrapper" class="min-h-screen flex flex-col items-center p-4">
 
         <header class="w-full container mb-6 pt-8">
             <h1 class="text-3xl font-extrabold text-gray-900 text-center">Capsule Tracker</h1>
@@ -46,7 +46,7 @@
         </header>
 
         <main id="tracker-container" class="w-full container bg-white shadow-xl rounded-2xl p-6 transition-opacity duration-500">
-            <!-- Loading indicator is always visible until data is rendered -->
+            <!-- Loading indicator is visible immediately and hides dynamic content -->
             <div id="loading" class="text-center text-gray-500 py-10">
                 <svg class="animate-spin h-5 w-5 mr-3 inline-block text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -115,7 +115,6 @@
         
         let db, auth, userId = null;
         let unsubscribeSnapshot = null;
-        let firstLoadComplete = false; // New flag to control initial visibility
 
         setLogLevel('Debug'); // Enable Firestore logging
 
@@ -364,21 +363,15 @@
                     document.getElementById('doses-modal').classList.remove('hidden');
                 }
                 
-                // CRITICAL FIX: Only show the app container once data has returned (success or failure)
-                if (!firstLoadComplete) {
-                    document.getElementById('app-wrapper').classList.remove('hidden');
-                    firstLoadComplete = true;
-                }
+                // No longer toggling #app-wrapper visibility here.
+                // The loading spinner in the main content handles the visual delay.
 
             }, (error) => {
                 console.error("Firestore listener error:", error);
                 showMessage("Connection Error", "There was an issue loading your tracking data. Check Firebase security rules.");
                 
-                // Show app wrapper even on error, so the user sees the error message
-                if (!firstLoadComplete) {
-                    document.getElementById('app-wrapper').classList.remove('hidden');
-                    firstLoadComplete = true;
-                }
+                // Ensure loading spinner is hidden on error so error message is visible
+                document.getElementById('loading').classList.add('hidden');
             });
         }
 
@@ -416,10 +409,6 @@
                 auth = getAuth(app);
 
                 document.getElementById('date-display').textContent = formatDisplayDate();
-                
-                // !!! IMPORTANT CHANGE: Do NOT remove the 'hidden' class here anymore.
-                // It is now removed inside the onSnapshot callback below to ensure everything
-                // loads together after the network call is complete.
                 
                 // Auth Logic: Since initialAuthToken is null (for standalone use), sign in anonymously
                 if (initialAuthToken) {
